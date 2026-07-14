@@ -33,8 +33,6 @@ import org.apache.spark.sql.hive.HiveUDFExpressionBuilder
 import org.apache.spark.sql.paimon.shims.SparkShimLoader
 import org.apache.spark.sql.types.BooleanType
 
-import java.util.Locale
-
 case class PaimonV1FunctionRegistry(session: SparkSession) extends SQLConfHelper {
 
   // ================== Start Public API ===================
@@ -169,12 +167,7 @@ case class PaimonV1FunctionRegistry(session: SparkSession) extends SQLConfHelper
    * the names.
    */
   private def qualifyIdentifier(ident: FunctionIdentifier): FunctionIdentifier = {
-    FunctionIdentifier(funcName = format(ident.funcName), database = ident.database)
-  }
-
-  /** Formats object names, taking into account case sensitivity. */
-  protected def format(name: String): String = {
-    if (conf.caseSensitiveAnalysis) name else name.toLowerCase(Locale.ROOT)
+    SparkShimLoader.shim.qualifyV1FunctionIdentifier(session, ident)
   }
 
   private def validateFunction(

@@ -25,11 +25,12 @@ import org.apache.paimon.spark.leafnode.PaimonLeafV2CommandExec
 import org.apache.paimon.spark.utils.CatalogUtils.{checkNamespace, toIdentifier}
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogStorageFormat, CatalogTablePartition}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogTablePartition}
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.v2.DescribeTableExec
+import org.apache.spark.sql.paimon.shims.SparkShimLoader
 import org.apache.spark.sql.types.StructType
 
 import scala.collection.JavaConverters._
@@ -89,8 +90,7 @@ case class PaimonDescribeTableExec(
         s"Found ${partition.size} matching partitions. " +
           s"Expected exactly one partition to match the partition spec.")
     }
-    val dummyStorageFormat =
-      CatalogStorageFormat(None, None, None, None, compressed = false, Map.empty)
+    val dummyStorageFormat = SparkShimLoader.shim.createEmptyCatalogStorageFormat()
     val partParameters: Map[String, String] = Map(
       PartitionStatistics.FIELD_FILE_COUNT -> partition.head.fileCount().toString,
       PartitionStatistics.FIELD_FILE_SIZE_IN_BYTES -> partition.head.fileSizeInBytes().toString,

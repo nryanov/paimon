@@ -18,7 +18,7 @@
 
 package org.apache.spark.sql.catalyst.parser.extensions
 
-import org.apache.paimon.spark.{SparkCatalog, SparkGenericCatalog}
+import org.apache.paimon.spark.{SparkCatalogBase, SparkGenericCatalogBase}
 import org.apache.paimon.spark.catalog.SparkBaseCatalog
 import org.apache.paimon.spark.commands.PaimonCreateTableLikeCommand
 
@@ -46,13 +46,13 @@ case class RewriteCreateTableLikeCommand(spark: SparkSession)
         val targetParts = toMultipartIdentifier(c.targetTable)
 
         targetParts match {
-          case CatalogAndIdentifier(targetCatalog: SparkCatalog, targetIdent) =>
+          case CatalogAndIdentifier(targetCatalog: SparkCatalogBase, targetIdent) =>
             if (usesHiveStorageSyntax(c.fileFormat)) {
               throw new UnsupportedOperationException(
                 "CREATE TABLE LIKE ... STORED AS is not supported for SparkCatalog.")
             }
             createTableLikeCommand(c, targetCatalog, targetIdent)
-          case CatalogAndIdentifier(targetCatalog: SparkGenericCatalog, targetIdent)
+          case CatalogAndIdentifier(targetCatalog: SparkGenericCatalogBase, targetIdent)
               if !usesHiveStorageSyntax(c.fileFormat) &&
                 c.provider.exists(SparkBaseCatalog.usePaimon) =>
             createTableLikeCommand(c, targetCatalog, targetIdent)

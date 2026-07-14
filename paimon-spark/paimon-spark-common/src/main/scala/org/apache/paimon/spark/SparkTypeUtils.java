@@ -162,7 +162,7 @@ public class SparkTypeUtils {
 
         @Override
         public DataType visit(CharType charType) {
-            return new org.apache.spark.sql.types.CharType(charType.getLength());
+            return SparkShimLoader.shim().createCharType(charType.getLength());
         }
 
         @Override
@@ -170,7 +170,7 @@ public class SparkTypeUtils {
             if (varCharType.getLength() == VarCharType.MAX_LENGTH) {
                 return DataTypes.StringType;
             } else {
-                return new org.apache.spark.sql.types.VarcharType(varCharType.getLength());
+                return SparkShimLoader.shim().createVarcharType(varCharType.getLength());
             }
         }
 

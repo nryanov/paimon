@@ -1401,24 +1401,28 @@ abstract class CompactProcedureTestBase extends PaimonSparkTestBase with StreamT
       // Verify local-sort effect: within each file, rows are physically sorted by column 'a'.
       // file_path in T$files is an absolute path (bucketPath + "/" + fileName), so we can
       // read each file directly as parquet (bypassing Paimon's scan) to check physical row order.
-      val fileRows =
-        spark.sql("SELECT file_path, record_count FROM `T$files`").collect()
-      fileRows.foreach {
-        row =>
-          val filePath = row.getString(0)
-          val recordCount = row.getLong(1)
-          if (recordCount > 1) {
-            // For multi-row files, verify rows are physically sorted by 'a'
-            val aValues =
-              spark.read.format("parquet").load(filePath).select("a").collect().map(_.getInt(0))
-            for (i <- 1 until aValues.length) {
-              Assertions
-                .assertThat(aValues(i))
-                .as(
-                  s"File $filePath: row $i (a=${aValues(i)}) should be >= row ${i - 1} (a=${aValues(i - 1)})")
-                .isGreaterThanOrEqualTo(aValues(i - 1))
+      // Skip on Spark 4.2+: Spark's parquet reader calls ParquetFileReader.open(...) which
+      // conflicts with Paimon's forked org.apache.parquet.hadoop.ParquetFileReader.
+      if (!gteqSpark4_2) {
+        val fileRows =
+          spark.sql("SELECT file_path, record_count FROM `T$files`").collect()
+        fileRows.foreach {
+          row =>
+            val filePath = row.getString(0)
+            val recordCount = row.getLong(1)
+            if (recordCount > 1) {
+              // For multi-row files, verify rows are physically sorted by 'a'
+              val aValues =
+                spark.read.format("parquet").load(filePath).select("a").collect().map(_.getInt(0))
+              for (i <- 1 until aValues.length) {
+                Assertions
+                  .assertThat(aValues(i))
+                  .as(
+                    s"File $filePath: row $i (a=${aValues(i)}) should be >= row ${i - 1} (a=${aValues(i - 1)})")
+                  .isGreaterThanOrEqualTo(aValues(i - 1))
+              }
             }
-          }
+        }
       }
 
       val table = loadTable("T").asInstanceOf[FileStoreTable]
@@ -1480,38 +1484,44 @@ abstract class CompactProcedureTestBase extends PaimonSparkTestBase with StreamT
       // Global-sort uses repartitionByRange which shuffles all data into 1 sorted file.
       // Reading multiple files in parallel gives non-deterministic cross-file ordering,
       // so we must verify physical ordering by reading each parquet file directly.
+      // Skip on Spark 4.2+: Spark's parquet reader calls ParquetFileReader.open(...) which
+      // conflicts with Paimon's forked org.apache.parquet.hadoop.ParquetFileReader.
       Assertions.assertThat(globalFileRows.length).isEqualTo(1)
-      val globalAValues =
-        spark.read
-          .format("parquet")
-          .load(globalFileRows(0).getString(0))
-          .select("a")
-          .collect()
-          .map(_.getInt(0))
-      Assertions.assertThat(globalAValues).isEqualTo(Array(1, 2, 3, 4, 5, 6, 7, 8))
+      if (!gteqSpark4_2) {
+        val globalAValues =
+          spark.read
+            .format("parquet")
+            .load(globalFileRows(0).getString(0))
+            .select("a")
+            .collect()
+            .map(_.getInt(0))
+        Assertions.assertThat(globalAValues).isEqualTo(Array(1, 2, 3, 4, 5, 6, 7, 8))
+      }
 
       // Local-sort uses sortWithinPartitions only (no range shuffle), so multiple output
       // files are produced. Each file is individually sorted by 'a', but ranges may overlap.
       Assertions.assertThat(localFileRows.length.toLong).isGreaterThan(globalFileRows.length)
-      var localFilesWithMultiRows = 0
-      localFileRows.foreach {
-        row =>
-          val filePath = row.getString(0)
-          val recordCount = row.getLong(1)
-          if (recordCount > 1) {
-            localFilesWithMultiRows += 1
-            val aValues =
-              spark.read.format("parquet").load(filePath).select("a").collect().map(_.getInt(0))
-            for (i <- 1 until aValues.length) {
-              Assertions
-                .assertThat(aValues(i))
-                .as(
-                  s"local-sort file $filePath: a[$i]=${aValues(i)} should be >= a[${i - 1}]=${aValues(i - 1)}")
-                .isGreaterThanOrEqualTo(aValues(i - 1))
+      if (!gteqSpark4_2) {
+        var localFilesWithMultiRows = 0
+        localFileRows.foreach {
+          row =>
+            val filePath = row.getString(0)
+            val recordCount = row.getLong(1)
+            if (recordCount > 1) {
+              localFilesWithMultiRows += 1
+              val aValues =
+                spark.read.format("parquet").load(filePath).select("a").collect().map(_.getInt(0))
+              for (i <- 1 until aValues.length) {
+                Assertions
+                  .assertThat(aValues(i))
+                  .as(
+                    s"local-sort file $filePath: a[$i]=${aValues(i)} should be >= a[${i - 1}]=${aValues(i - 1)}")
+                  .isGreaterThanOrEqualTo(aValues(i - 1))
+              }
             }
-          }
+        }
+        Assertions.assertThat(localFilesWithMultiRows).isGreaterThan(0)
       }
-      Assertions.assertThat(localFilesWithMultiRows).isGreaterThan(0)
 
       val localFiles = spark.sql("SELECT count(*) FROM `T_local$files`").collect()(0).getLong(0)
       val globalFiles = spark.sql("SELECT count(*) FROM `T_global$files`").collect()(0).getLong(0)

@@ -25,11 +25,14 @@ import org.apache.paimon.table.{FileStoreTable, FormatTable}
 import org.apache.paimon.types.{DataType, RowType}
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.{NamedRelation, UnresolvedFunction}
+import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.parser.ParserInterface
-import org.apache.spark.sql.catalyst.plans.logical.{Assignment, CTERelationRef, InsertAction, LogicalPlan, MergeAction, MergeIntoTable, SubqueryAlias, TableSpec, UnresolvedWith, UpdateAction}
+import org.apache.spark.sql.catalyst.plans.logical.{Assignment, CTERelationRef, DescribeRelation, InsertAction, LogicalPlan, MergeAction, MergeIntoTable, OverwriteByExpression, OverwritePartitionsDynamic, SubqueryAlias, TableSpec, UnresolvedWith, UpdateAction}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.connector.catalog.{Column, Identifier, StagingTableCatalog, Table, TableCatalog}
@@ -159,6 +162,61 @@ trait SparkShim {
       notMatchedBySourceActions: Seq[MergeAction],
       withSchemaEvolution: Boolean): MergeIntoTable
 
+  /**
+   * Constructs the Paimon fallback command for dynamic partition overwrite. Spark 4.2 extended
+   * [[V2WriteCommand]] with
+   * [[org.apache.spark.sql.catalyst.plans.logical.WriteWithSchemaEvolution]], so the concrete
+   * command class is version-specific and must be built behind this shim.
+   */
+  def createPaimonDynamicPartitionOverwriteCommand(
+      table: NamedRelation,
+      fileStoreTable: FileStoreTable,
+      query: LogicalPlan,
+      writeOptions: Map[String, String],
+      isByName: Boolean,
+      source: OverwritePartitionsDynamic): LogicalPlan
+
+  /**
+   * Spark 4.2 added `withSchemaEvolution` to [[OverwriteByExpression]] factory methods. The
+   * signature must be constructed behind this shim.
+   */
+  def createOverwriteByExpressionByName(
+      table: NamedRelation,
+      query: LogicalPlan,
+      condition: Expression,
+      writeOptions: Map[String, String],
+      withSchemaEvolution: Boolean = false): LogicalPlan
+
+  /**
+   * Spark 4.2 added `withSchemaEvolution` to [[OverwritePartitionsDynamic]] factory methods. The
+   * signature must be constructed behind this shim.
+   */
+  def createOverwritePartitionsDynamicByName(
+      table: NamedRelation,
+      query: LogicalPlan,
+      writeOptions: Map[String, String],
+      withSchemaEvolution: Boolean = false): LogicalPlan
+
+  /**
+   * Returns the partition spec for [[DescribeRelation]]. Spark 4.2 removed `partitionSpec` from
+   * `DescribeRelation` (partition describe moved to [[DescribeTablePartition]]), so this accessor
+   * must be version-specific to avoid `NoSuchMethodError` at runtime.
+   */
+  def describeRelationPartitionSpec(describe: DescribeRelation): Map[String, String]
+
+  /**
+   * Plans Spark 4.2 [[DescribeTablePartition]] for Paimon tables. Returns `None` on Spark versions
+   * that do not have this logical node.
+   */
+  def planDescribeTablePartition(spark: SparkSession, plan: LogicalPlan): Option[Seq[SparkPlan]]
+
+  /**
+   * Creates an empty [[CatalogStorageFormat]] for partition describe output. Spark 4.2 added a
+   * `serdeName` field to [[CatalogStorageFormat]], so the constructor signature must be built
+   * behind this shim to avoid `NoSuchMethodError` at runtime.
+   */
+  def createEmptyCatalogStorageFormat(): CatalogStorageFormat
+
   // Spark 3.4 added `notMatchedBySourceActions` to `MergeIntoTable`. On 3.2/3.3 the field doesn't
   // exist on the AST, so this returns `Seq.empty`. Lets `paimon-spark-common` (which compiles
   // against 3.5/4.1) reference NMBS via a single accessor that works on all minor versions.
@@ -238,4 +296,29 @@ trait SparkShim {
   def isSparkVariantType(dataType: org.apache.spark.sql.types.DataType): Boolean
 
   def SparkVariantType(): org.apache.spark.sql.types.DataType
+
+  /**
+   * Creates a Spark `CharType`. Spark 4.2 (SPARK-54870) replaced the single-arg `CharType(length)`
+   * constructor with a collation-aware case class, so the 4.2 shim must use `CharType.apply`.
+   */
+  def createCharType(length: Int): org.apache.spark.sql.types.DataType
+
+  /** Same collation constructor change as [[createCharType]] for `VarcharType`. */
+  def createVarcharType(length: Int): org.apache.spark.sql.types.DataType
+
+  /**
+   * Qualifies a persistent V1 function identifier before registration in
+   * [[org.apache.spark.sql.catalyst.catalog.PaimonV1FunctionRegistry]]. Spark 4.2 requires 3-part
+   * identifiers (catalog.database.function) in
+   * [[org.apache.spark.sql.catalyst.analysis.SimpleFunctionRegistry]].
+   */
+  def qualifyV1FunctionIdentifier(
+      session: SparkSession,
+      ident: FunctionIdentifier): FunctionIdentifier
+
+  /**
+   * Reads the IGNORE NULLS flag from an unresolved function. Spark 4.2 changed
+   * [[UnresolvedFunction.ignoreNulls]] from `Boolean` to `Option[Boolean]`.
+   */
+  def unresolvedFunctionIgnoreNulls(u: UnresolvedFunction): Boolean
 }

@@ -112,14 +112,14 @@ import static org.apache.paimon.spark.utils.CatalogUtils.toUpdateColumnDefaultVa
 import static org.apache.paimon.utils.Preconditions.checkArgument;
 
 /** Spark {@link TableCatalog} for paimon. */
-public class SparkCatalog extends SparkBaseCatalog
+public class SparkCatalogBase extends SparkBaseCatalog
         implements SupportView,
                 SupportV1Function,
                 FunctionCatalog,
                 SupportsNamespaces,
                 FormatTableCatalog {
 
-    private static final Logger LOG = LoggerFactory.getLogger(SparkCatalog.class);
+    private static final Logger LOG = LoggerFactory.getLogger(SparkCatalogBase.class);
 
     public static final String FUNCTION_DEFINITION_NAME = "spark";
     private static final String PRIMARY_KEY_IDENTIFIER = "primary-key";

@@ -19,7 +19,7 @@
 package org.apache.paimon.spark.execution
 
 import org.apache.paimon.function.FunctionDefinition
-import org.apache.paimon.spark.SparkCatalog.FUNCTION_DEFINITION_NAME
+import org.apache.paimon.spark.SparkCatalogBase.FUNCTION_DEFINITION_NAME
 import org.apache.paimon.spark.catalog.SupportV1Function
 import org.apache.paimon.spark.leafnode.PaimonLeafRunnableCommand
 

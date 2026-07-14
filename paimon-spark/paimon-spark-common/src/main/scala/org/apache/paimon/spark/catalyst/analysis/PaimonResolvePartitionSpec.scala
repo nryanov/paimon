@@ -76,4 +76,26 @@ object PaimonResolvePartitionSpec {
     }
     InternalRow.fromSeq(partValues)
   }
+
+  def toTablePartitionSpec(
+      partitionSchema: StructType,
+      resolved: ResolvedPartitionSpec): TablePartitionSpec = {
+    resolved.names.zipWithIndex.map {
+      case (name, i) =>
+        val field = partitionSchema.fields.find(_.name == name).get
+        val dt = CharVarcharUtils.replaceCharVarcharWithString(field.dataType)
+        val raw = resolved.ident.get(i, dt)
+        val str =
+          if (raw == null) {
+            null
+          } else {
+            Compatibility
+              .cast(Literal.create(raw, dt), StringType, Some(conf.sessionLocalTimeZone))
+              .eval()
+              .asInstanceOf[Any]
+              .toString
+          }
+        name -> str
+    }.toMap
+  }
 }

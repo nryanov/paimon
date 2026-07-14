@@ -22,7 +22,7 @@ import org.apache.paimon.CoreOptions
 import org.apache.paimon.CoreOptions.TYPE
 import org.apache.paimon.iceberg.IcebergOptions
 import org.apache.paimon.options.Options
-import org.apache.paimon.spark.{SparkCatalog, SparkGenericCatalog, SparkSource, SparkTable}
+import org.apache.paimon.spark.{SparkCatalogBase, SparkGenericCatalogBase, SparkSource, SparkTable}
 import org.apache.paimon.spark.catalog.SparkBaseCatalog
 import org.apache.paimon.table.FileStoreTable
 import org.apache.paimon.table.source.snapshot.TimeTravelUtil
@@ -31,7 +31,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, OverwriteByExpression, OverwritePartitionsDynamic, TableSpec}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, TableSpec}
 import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -137,9 +137,13 @@ object PaimonTableAsSelectHelper {
       val dynamicOverwrite = existing.partitioning().nonEmpty &&
         spark.sessionState.conf.partitionOverwriteMode == PartitionOverwriteMode.DYNAMIC
       if (dynamicOverwrite) {
-        Some(OverwritePartitionsDynamic.byName(relation, query, writeOptions))
+        Some(
+          SparkShimLoader.shim
+            .createOverwritePartitionsDynamicByName(relation, query, writeOptions))
       } else {
-        Some(OverwriteByExpression.byName(relation, query, Literal(true), writeOptions))
+        Some(
+          SparkShimLoader.shim
+            .createOverwriteByExpressionByName(relation, query, Literal(true), writeOptions))
       }
     } catch {
       case _: Exception => None
@@ -147,8 +151,8 @@ object PaimonTableAsSelectHelper {
   }
 
   def supportsCatalog(catalog: SparkBaseCatalog, tableSpec: TableSpec): Boolean = catalog match {
-    case _: SparkCatalog => true
-    case _: SparkGenericCatalog =>
+    case _: SparkCatalogBase => true
+    case _: SparkGenericCatalogBase =>
       tableSpec.provider.exists(_.equalsIgnoreCase(SparkSource.NAME))
     case _ => false
   }

@@ -21,6 +21,7 @@ package org.apache.spark.sql.paimon.shims
 import org.apache.paimon.data.variant.{GenericVariant, Variant}
 import org.apache.paimon.spark.catalyst.analysis.Spark4ResolutionRules
 import org.apache.paimon.spark.catalyst.parser.extensions.PaimonSpark4SqlExtensionsParser
+import org.apache.paimon.spark.commands.PaimonDynamicPartitionOverwriteCommand
 import org.apache.paimon.spark.data.{Spark4ArrayData, Spark4InternalRow, Spark4InternalRowWithBlob, SparkArrayData, SparkInternalRow}
 import org.apache.paimon.spark.format.FormatTableBatchWrite
 import org.apache.paimon.spark.rowops.PaimonCopyOnWriteScan
@@ -31,12 +32,14 @@ import org.apache.paimon.types.{DataType, RowType}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.analysis.{CTESubstitution, SubstituteUnresolvedOrdinals}
+import org.apache.spark.sql.catalyst.analysis.{CTESubstitution, NamedRelation, SubstituteUnresolvedOrdinals, UnresolvedFunction}
+import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.parser.ParserInterface
-import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Assignment, ColumnDefinition, CTERelationRef, InsertAction, LogicalPlan, MergeAction, MergeIntoTable, MergeRows, SubqueryAlias, TableSpec, UnresolvedWith, UpdateAction}
+import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Assignment, ColumnDefinition, CTERelationRef, DescribeRelation, InsertAction, LogicalPlan, MergeAction, MergeIntoTable, MergeRows, OverwriteByExpression, OverwritePartitionsDynamic, SubqueryAlias, TableSpec, UnresolvedWith, UpdateAction}
 import org.apache.spark.sql.catalyst.plans.logical.MergeRows.Keep
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.{ArrayData, GeneratedColumn, IdentityColumn, ResolveDefaultColumns}
@@ -49,10 +52,11 @@ import org.apache.spark.sql.execution.datasources.v2.{AtomicReplaceTableAsSelect
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{DataTypes, StructType, VariantType}
+import org.apache.spark.sql.types.{CharType, DataTypes, StructType, VarcharType, VariantType}
 import org.apache.spark.unsafe.types.VariantVal
 
 import java.util.{Map => JMap}
+import java.util.Locale
 
 /**
  * Spark 4.0-compatible override of the `paimon-spark4-common` `Spark4Shim`. Differences from the
@@ -256,6 +260,43 @@ class Spark4Shim extends SparkShim {
       withSchemaEvolution)
   }
 
+  override def createPaimonDynamicPartitionOverwriteCommand(
+      table: NamedRelation,
+      fileStoreTable: FileStoreTable,
+      query: LogicalPlan,
+      writeOptions: Map[String, String],
+      isByName: Boolean,
+      source: OverwritePartitionsDynamic): LogicalPlan = {
+    PaimonDynamicPartitionOverwriteCommand(table, fileStoreTable, query, writeOptions, isByName)
+  }
+
+  override def createOverwriteByExpressionByName(
+      table: NamedRelation,
+      query: LogicalPlan,
+      condition: Expression,
+      writeOptions: Map[String, String],
+      withSchemaEvolution: Boolean): LogicalPlan = {
+    OverwriteByExpression.byName(table, query, condition, writeOptions)
+  }
+
+  override def createOverwritePartitionsDynamicByName(
+      table: NamedRelation,
+      query: LogicalPlan,
+      writeOptions: Map[String, String],
+      withSchemaEvolution: Boolean): LogicalPlan = {
+    OverwritePartitionsDynamic.byName(table, query, writeOptions)
+  }
+
+  override def describeRelationPartitionSpec(describe: DescribeRelation): Map[String, String] =
+    describe.partitionSpec
+
+  override def planDescribeTablePartition(
+      spark: SparkSession,
+      plan: LogicalPlan): Option[Seq[SparkPlan]] = None
+
+  override def createEmptyCatalogStorageFormat(): CatalogStorageFormat =
+    CatalogStorageFormat(None, None, None, None, compressed = false, Map.empty)
+
   override def notMatchedBySourceActions(merge: MergeIntoTable): Seq[MergeAction] =
     merge.notMatchedBySourceActions
 
@@ -321,6 +362,23 @@ class Spark4Shim extends SparkShim {
       userSpecifiedSchema,
       partitionSchema)
   }
+
+  override def createCharType(length: Int): org.apache.spark.sql.types.DataType =
+    new CharType(length)
+
+  override def createVarcharType(length: Int): org.apache.spark.sql.types.DataType =
+    new VarcharType(length)
+
+  override def qualifyV1FunctionIdentifier(
+      session: SparkSession,
+      ident: FunctionIdentifier): FunctionIdentifier = {
+    val funcName =
+      if (session.sessionState.conf.caseSensitiveAnalysis) ident.funcName
+      else ident.funcName.toLowerCase(Locale.ROOT)
+    FunctionIdentifier(funcName, ident.database)
+  }
+
+  override def unresolvedFunctionIgnoreNulls(u: UnresolvedFunction): Boolean = u.ignoreNulls
 
   override def toPaimonVariant(o: Object): Variant = {
     val v = o.asInstanceOf[VariantVal]

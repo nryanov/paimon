@@ -1,0 +1,413 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.spark.sql.paimon.shims
+
+import org.apache.paimon.data.variant.{GenericVariant, Variant}
+import org.apache.paimon.spark.catalyst.analysis.Spark4ResolutionRules
+import org.apache.paimon.spark.catalyst.parser.extensions.PaimonSpark4SqlExtensionsParser
+import org.apache.paimon.spark.commands.PaimonSpark42DynamicPartitionOverwriteCommand
+import org.apache.paimon.spark.data.{Spark4ArrayData, Spark4InternalRow, Spark4InternalRowWithBlob, SparkArrayData, SparkInternalRow}
+import org.apache.paimon.spark.execution.Spark42DescribeTablePlanning
+import org.apache.paimon.spark.format.FormatTableBatchWrite
+import org.apache.paimon.spark.rowops.PaimonCopyOnWriteScan
+import org.apache.paimon.spark.write.PaimonBatchWrite
+import org.apache.paimon.table.{FileStoreTable, FormatTable}
+import org.apache.paimon.types.{DataType, RowType}
+
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.FunctionIdentifier
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.{CTESubstitution, NamedRelation, UnresolvedFunction}
+import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.parser.ParserInterface
+import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Assignment, ColumnDefinition, CTERelationRef, DescribeRelation, InsertAction, LogicalPlan, MergeAction, MergeIntoTable, MergeRows, OverwriteByExpression, OverwritePartitionsDynamic, SubqueryAlias, TableSpec, UnresolvedWith, UpdateAction}
+import org.apache.spark.sql.catalyst.plans.logical.MergeRows.{Copy, Insert, Keep, Update}
+import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.util.{ArrayData, GeneratedColumn, IdentityColumn, ResolveDefaultColumns}
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Column, Identifier, StagingTableCatalog, Table, TableCatalog}
+import org.apache.spark.sql.connector.expressions.Transform
+import org.apache.spark.sql.connector.write.BatchWrite
+import org.apache.spark.sql.execution.{SparkFormatTable, SparkPlan}
+import org.apache.spark.sql.execution.datasources.{PartitioningAwareFileIndex, PartitionSpec}
+import org.apache.spark.sql.execution.datasources.v2.{AtomicReplaceTableAsSelectExec, AtomicReplaceTableExec, ReplaceTableAsSelectExec, ReplaceTableExec}
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.streaming.runtime.MetadataLogFileIndex
+import org.apache.spark.sql.execution.streaming.sinks.FileStreamSink
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{CharType, DataTypes, StructType, VarcharType, VariantType}
+import org.apache.spark.unsafe.types.VariantVal
+
+import java.util.{Map => JMap}
+import java.util.Locale
+
+class Spark42Shim extends SparkShim {
+
+  override def classicApi: ClassicApi = new Classic4Api
+
+  override def createSparkParser(delegate: ParserInterface): ParserInterface = {
+    new PaimonSpark4SqlExtensionsParser(delegate)
+  }
+
+  override def createCustomResolution(spark: SparkSession): Rule[LogicalPlan] = {
+    Spark4ResolutionRules(spark)
+  }
+
+  override def createSparkInternalRow(rowType: RowType): SparkInternalRow = {
+    new Spark4InternalRow(rowType)
+  }
+
+  override def createSparkInternalRowWithBlob(
+      rowType: RowType,
+      blobFields: Set[Int],
+      blobAsDescriptor: Boolean): SparkInternalRow = {
+    new Spark4InternalRowWithBlob(rowType, blobFields, blobAsDescriptor)
+  }
+
+  override def createSparkArrayData(elementType: DataType): SparkArrayData = {
+    new Spark4ArrayData(elementType)
+  }
+
+  override def createTable(
+      tableCatalog: TableCatalog,
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: JMap[String, String]): Table = {
+    val columns = CatalogV2Util.structTypeToV2Columns(schema)
+    tableCatalog.createTable(ident, columns, partitions, properties)
+  }
+
+  override def createReplaceTableAsSelectExec(
+      catalog: TableCatalog,
+      ident: Identifier,
+      partitioning: Seq[Transform],
+      query: LogicalPlan,
+      tableSpec: TableSpec,
+      writeOptions: Map[String, String],
+      orCreate: Boolean): SparkPlan = {
+    ReplaceTableAsSelectExec(
+      catalog,
+      ident,
+      partitioning,
+      query,
+      tableSpec,
+      writeOptions,
+      orCreate = orCreate,
+      invalidateCache)
+  }
+
+  override def createAtomicReplaceTableAsSelectExec(
+      catalog: StagingTableCatalog,
+      ident: Identifier,
+      partitioning: Seq[Transform],
+      query: LogicalPlan,
+      tableSpec: TableSpec,
+      writeOptions: Map[String, String],
+      orCreate: Boolean): SparkPlan = {
+    AtomicReplaceTableAsSelectExec(
+      catalog,
+      ident,
+      partitioning,
+      query,
+      tableSpec,
+      writeOptions,
+      orCreate = orCreate,
+      invalidateCache)
+  }
+
+  override def createReplaceTableExec(
+      catalog: TableCatalog,
+      ident: Identifier,
+      columns: Array[Column],
+      partitioning: Seq[Transform],
+      tableSpec: TableSpec,
+      orCreate: Boolean): SparkPlan = {
+    ReplaceTableExec(
+      catalog,
+      ident,
+      columns,
+      partitioning,
+      tableSpec,
+      orCreate = orCreate,
+      invalidateCache)
+  }
+
+  override def createAtomicReplaceTableExec(
+      catalog: StagingTableCatalog,
+      ident: Identifier,
+      columns: Array[Column],
+      partitioning: Seq[Transform],
+      tableSpec: TableSpec,
+      orCreate: Boolean): SparkPlan = {
+    AtomicReplaceTableExec(
+      catalog,
+      ident,
+      columns,
+      partitioning,
+      tableSpec,
+      orCreate = orCreate,
+      invalidateCache)
+  }
+
+  override def toReplaceTableColumns(
+      tableSchema: StructType,
+      schemaOrColumns: Any,
+      catalog: TableCatalog,
+      ident: Identifier): Array[Column] = {
+    val statementType = "REPLACE TABLE"
+    val columns = schemaOrColumns.asInstanceOf[Seq[ColumnDefinition]]
+    ResolveDefaultColumns.validateCatalogForDefaultValue(columns, catalog, ident)
+    GeneratedColumn.validateGeneratedColumns(tableSchema, catalog, ident, statementType)
+    IdentityColumn.validateIdentityColumn(tableSchema, catalog, ident)
+    columns.map(_.toV2Column(statementType)).toArray
+  }
+
+  override def copyTableSpec(
+      tableSpec: TableSpec,
+      additionalProperties: Map[String, String],
+      location: Option[String]): TableSpec = {
+    tableSpec.copy(properties = tableSpec.properties ++ additionalProperties, location = location)
+  }
+
+  private def invalidateCache(tableCatalog: TableCatalog, ident: Identifier): Unit = {
+    tableCatalog.invalidateTable(ident)
+  }
+
+  override def createPaimonBatchWrite(
+      table: FileStoreTable,
+      writeSchema: StructType,
+      dataSchema: StructType,
+      overwritePartitions: Option[Map[String, String]],
+      copyOnWriteScan: Option[PaimonCopyOnWriteScan]): BatchWrite =
+    new PaimonBatchWrite(table, writeSchema, dataSchema, overwritePartitions, copyOnWriteScan)
+
+  override def createFormatTableBatchWrite(
+      table: FormatTable,
+      overwriteDynamic: Option[Boolean],
+      overwritePartitions: Option[Map[String, String]],
+      writeSchema: StructType): BatchWrite =
+    new FormatTableBatchWrite(table, overwriteDynamic, overwritePartitions, writeSchema)
+
+  override def createCTERelationRef(
+      cteId: Long,
+      resolved: Boolean,
+      output: Seq[Attribute],
+      isStreaming: Boolean): CTERelationRef = {
+    CTERelationRef(cteId, resolved, output.toSeq, isStreaming)
+  }
+
+  override def supportsHashAggregate(
+      aggregateBufferAttributes: Seq[Attribute],
+      groupingExpression: Seq[Expression]): Boolean = {
+    Aggregate.supportsHashAggregate(aggregateBufferAttributes.toSeq, groupingExpression.toSeq)
+  }
+
+  override def supportsObjectHashAggregate(
+      aggregateExpressions: Seq[AggregateExpression],
+      groupByExpressions: Seq[Expression]): Boolean =
+    Aggregate.supportsObjectHashAggregate(aggregateExpressions.toSeq, groupByExpressions.toSeq)
+
+  override def createMergeIntoTable(
+      targetTable: LogicalPlan,
+      sourceTable: LogicalPlan,
+      mergeCondition: Expression,
+      matchedActions: Seq[MergeAction],
+      notMatchedActions: Seq[MergeAction],
+      notMatchedBySourceActions: Seq[MergeAction],
+      withSchemaEvolution: Boolean): MergeIntoTable = {
+    MergeIntoTable(
+      targetTable,
+      sourceTable,
+      mergeCondition,
+      matchedActions,
+      notMatchedActions,
+      notMatchedBySourceActions,
+      withSchemaEvolution)
+  }
+
+  override def createPaimonDynamicPartitionOverwriteCommand(
+      table: NamedRelation,
+      fileStoreTable: FileStoreTable,
+      query: LogicalPlan,
+      writeOptions: Map[String, String],
+      isByName: Boolean,
+      source: OverwritePartitionsDynamic): LogicalPlan = {
+    PaimonSpark42DynamicPartitionOverwriteCommand(
+      table,
+      fileStoreTable,
+      query,
+      writeOptions,
+      isByName,
+      source.withSchemaEvolution)
+  }
+
+  override def createOverwriteByExpressionByName(
+      table: NamedRelation,
+      query: LogicalPlan,
+      condition: Expression,
+      writeOptions: Map[String, String],
+      withSchemaEvolution: Boolean): LogicalPlan = {
+    OverwriteByExpression.byName(table, query, condition, writeOptions, withSchemaEvolution)
+  }
+
+  override def createOverwritePartitionsDynamicByName(
+      table: NamedRelation,
+      query: LogicalPlan,
+      writeOptions: Map[String, String],
+      withSchemaEvolution: Boolean): LogicalPlan = {
+    OverwritePartitionsDynamic.byName(table, query, writeOptions, withSchemaEvolution)
+  }
+
+  override def describeRelationPartitionSpec(describe: DescribeRelation): Map[String, String] =
+    Map.empty
+
+  override def planDescribeTablePartition(
+      spark: SparkSession,
+      plan: LogicalPlan): Option[Seq[SparkPlan]] =
+    Spark42DescribeTablePlanning.plan(spark, plan)
+
+  override def createEmptyCatalogStorageFormat(): CatalogStorageFormat =
+    CatalogStorageFormat(None, None, None, None, compressed = false, Map.empty, None)
+
+  override def notMatchedBySourceActions(merge: MergeIntoTable): Seq[MergeAction] =
+    merge.notMatchedBySourceActions
+
+  override def createUpdateAction(
+      condition: Option[Expression],
+      assignments: Seq[Assignment]): UpdateAction =
+    UpdateAction(condition, assignments)
+
+  override def createInsertAction(
+      condition: Option[Expression],
+      assignments: Seq[Assignment]): InsertAction =
+    InsertAction(condition, assignments)
+
+  override def copyDataSourceV2Relation(
+      relation: DataSourceV2Relation,
+      table: Table,
+      output: Seq[AttributeReference]): DataSourceV2Relation = {
+    relation.copy(table = table, output = output)
+  }
+
+  override def earlyBatchRules(): Seq[Rule[LogicalPlan]] = Seq(CTESubstitution)
+
+  override def mergeRowsKeepCopy(condition: Expression, output: Seq[Expression]): AnyRef =
+    Keep(Copy, condition, output)
+
+  override def mergeRowsKeepUpdate(condition: Expression, output: Seq[Expression]): AnyRef =
+    Keep(Update, condition, output)
+
+  override def mergeRowsKeepInsert(condition: Expression, output: Seq[Expression]): AnyRef =
+    Keep(Insert, condition, output)
+
+  override def transformUnresolvedWithCteRelations(
+      u: UnresolvedWith,
+      transform: SubqueryAlias => SubqueryAlias): UnresolvedWith = {
+    u.copy(cteRelations = u.cteRelations.map {
+      case (name, alias, depth) => (name, transform(alias), depth)
+    })
+  }
+
+  override def hasFileStreamSinkMetadata(
+      paths: Seq[String],
+      hadoopConf: Configuration,
+      sqlConf: SQLConf): Boolean = {
+    FileStreamSink.hasMetadata(paths, hadoopConf, sqlConf)
+  }
+
+  override def createPartitionedMetadataLogFileIndex(
+      sparkSession: SparkSession,
+      path: Path,
+      parameters: Map[String, String],
+      userSpecifiedSchema: Option[StructType],
+      partitionSchema: StructType): PartitioningAwareFileIndex = {
+    new Spark42Shim.PartitionedMetadataLogFileIndex(
+      sparkSession,
+      path,
+      parameters,
+      userSpecifiedSchema,
+      partitionSchema)
+  }
+
+  override def createCharType(length: Int): org.apache.spark.sql.types.DataType =
+    CharType.apply(length)
+
+  override def createVarcharType(length: Int): org.apache.spark.sql.types.DataType =
+    VarcharType.apply(length)
+
+  override def qualifyV1FunctionIdentifier(
+      session: SparkSession,
+      ident: FunctionIdentifier): FunctionIdentifier = {
+    val conf = session.sessionState.conf
+    val funcName =
+      if (conf.caseSensitiveAnalysis) ident.funcName
+      else ident.funcName.toLowerCase(Locale.ROOT)
+    val catalogManager = session.sessionState.catalogManager
+    val catalog = ident.catalog.orElse(Some(catalogManager.currentCatalog.name()))
+    val database = ident.database.orElse {
+      val namespace = catalogManager.currentNamespace
+      if (namespace.nonEmpty) Some(namespace.last) else None
+    }
+    FunctionIdentifier(funcName, database, catalog)
+  }
+
+  override def unresolvedFunctionIgnoreNulls(u: UnresolvedFunction): Boolean =
+    u.ignoreNulls.getOrElse(false)
+
+  override def toPaimonVariant(o: Object): Variant = {
+    val v = o.asInstanceOf[VariantVal]
+    new GenericVariant(v.getValue, v.getMetadata)
+  }
+
+  override def toPaimonVariant(row: InternalRow, pos: Int): Variant = {
+    val v = row.getVariant(pos)
+    new GenericVariant(v.getValue, v.getMetadata)
+  }
+
+  override def toPaimonVariant(array: ArrayData, pos: Int): Variant = {
+    val v = array.getVariant(pos)
+    new GenericVariant(v.getValue, v.getMetadata)
+  }
+
+  override def isSparkVariantType(dataType: org.apache.spark.sql.types.DataType): Boolean =
+    dataType.isInstanceOf[VariantType]
+
+  override def SparkVariantType(): org.apache.spark.sql.types.DataType = DataTypes.VariantType
+}
+
+object Spark42Shim {
+
+  /** Paimon's partition-aware wrapper over Spark's `MetadataLogFileIndex`. */
+  private[shims] class PartitionedMetadataLogFileIndex(
+      sparkSession: SparkSession,
+      path: Path,
+      parameters: Map[String, String],
+      userSpecifiedSchema: Option[StructType],
+      override val partitionSchema: StructType)
+    extends MetadataLogFileIndex(sparkSession, path, parameters, userSpecifiedSchema) {
+
+    override def partitionSpec(): PartitionSpec = {
+      SparkFormatTable.alignPartitionSpec(super.partitionSpec(), partitionSchema)
+    }
+  }
+}

@@ -26,6 +26,18 @@ import org.apache.spark.sql.Row
 
 import java.io.File
 
+/**
+ * Shared V1 UDF tests for Paimon Spark catalogs with REST metastore.
+ *
+ * Manual run in IntelliJ IDEA (Spark 4.2): Test class:
+ * `org.apache.paimon.spark.sql.PaimonV1FunctionTest` Module: `paimon-spark-4.2`
+ *
+ * Maven equivalent:
+ * {{{
+ * mvn -pl paimon-spark/paimon-spark-4.2 -am -Pspark4,fast-build -DfailIfNoTests=false \
+ *   -DwildcardSuites=org.apache.paimon.spark.sql.PaimonV1FunctionTest -Dtest=none test
+ * }}}
+ */
 abstract class PaimonV1FunctionTestBase extends PaimonSparkTestWithRestCatalogBase {
 
   test("Paimon V1 Function: create or replace function") {
@@ -265,9 +277,17 @@ abstract class PaimonV1FunctionTestBase extends PaimonSparkTestWithRestCatalogBa
         sql(s"""
                |DROP FUNCTION udf_add2
                |""".stripMargin)
-      }.getMessage.contains("udf_add2 is a built-in/temporary function"))
+      }.getMessage.contains(expectedDropTemporaryFunctionMessage))
     }
   }
+
+  /** Spark 4.2 changed the error message for DROP FUNCTION on a temporary UDF. */
+  private def expectedDropTemporaryFunctionMessage: String =
+    if (gteqSpark4_2) {
+      "Please use DROP TEMPORARY FUNCTION"
+    } else {
+      "udf_add2 is a built-in/temporary function"
+    }
 
   test("Paimon V1 Function: COPY INTO location FROM (SELECT udf(...))") {
     withUserDefinedFunction("udf_add2" -> false) {

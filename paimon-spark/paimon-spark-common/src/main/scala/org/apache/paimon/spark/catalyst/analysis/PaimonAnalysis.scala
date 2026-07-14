@@ -23,7 +23,7 @@ import org.apache.paimon.spark.SparkTable
 import org.apache.paimon.spark.catalyst.Compatibility
 import org.apache.paimon.spark.catalyst.analysis.PaimonRelation.isPaimonTable
 import org.apache.paimon.spark.catalyst.plans.logical.PaimonDropPartitions
-import org.apache.paimon.spark.commands.{PaimonAnalyzeTableColumnCommand, PaimonDynamicPartitionOverwriteCommand, PaimonShowColumnsCommand, SchemaEvolutionHelper}
+import org.apache.paimon.spark.commands.{PaimonAnalyzeTableColumnCommand, PaimonShowColumnsCommand, SchemaEvolutionHelper}
 import org.apache.paimon.table.FileStoreTable
 
 import org.apache.spark.sql.{PaimonUtils, SparkSession}
@@ -34,6 +34,7 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.TableCapability
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Implicits, DataSourceV2Relation}
+import org.apache.spark.sql.paimon.shims.SparkShimLoader
 
 import scala.collection.JavaConverters._
 
@@ -68,7 +69,13 @@ class PaimonAnalysis(session: SparkSession) extends Rule[LogicalPlan] {
       }
 
     case o @ PaimonDynamicPartitionOverwrite(r, d) if o.resolved =>
-      PaimonDynamicPartitionOverwriteCommand(r, d, o.query, o.writeOptions, o.isByName)
+      SparkShimLoader.shim.createPaimonDynamicPartitionOverwriteCommand(
+        r,
+        d,
+        o.query,
+        o.writeOptions,
+        o.isByName,
+        o)
 
     case merge: MergeIntoTable
         if !merge.resolved && isPaimonTable(merge.targetTable) && merge.childrenResolved =>

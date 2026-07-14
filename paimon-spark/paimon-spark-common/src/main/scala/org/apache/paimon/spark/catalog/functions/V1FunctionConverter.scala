@@ -20,7 +20,7 @@ package org.apache.paimon.spark.catalog.functions
 
 import org.apache.paimon.catalog.Identifier
 import org.apache.paimon.function.{Function, FunctionDefinition, FunctionImpl}
-import org.apache.paimon.spark.SparkCatalog.FUNCTION_DEFINITION_NAME
+import org.apache.paimon.spark.SparkCatalogBase.FUNCTION_DEFINITION_NAME
 
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogFunction, FunctionResource, FunctionResourceType}
