@@ -25,6 +25,7 @@ import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCapability;
 import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.connector.metric.CustomTaskMetric;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
@@ -116,6 +117,12 @@ class RollbackStagedTable implements StagedTable, SupportsRead, SupportsWrite, S
 
     boolean hasWriteStarted() {
         return writeStarted;
+    }
+
+    // No @Override: absent on Spark 3.x StagedTable. Required at runtime on ADS Spark 4.2
+    // where StagedTable and TruncatableTable both define conflicting defaults.
+    public CustomTaskMetric[] reportDriverMetrics() {
+        return new CustomTaskMetric[0];
     }
 
     @Override

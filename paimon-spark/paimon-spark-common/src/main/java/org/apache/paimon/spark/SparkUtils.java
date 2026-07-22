@@ -27,9 +27,9 @@ import org.apache.spark.SparkEnv;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.parser.ParseException;
 import org.apache.spark.sql.catalyst.parser.ParserInterface;
-import org.apache.spark.sql.connector.catalog.CatalogManager;
 import org.apache.spark.sql.connector.catalog.CatalogPlugin;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.paimon.shims.SparkShimLoader;
 
 import java.util.List;
 import java.util.function.BiFunction;
@@ -112,11 +112,9 @@ public class SparkUtils {
      */
     public static CatalogAndIdentifier catalogAndIdentifier(
             SparkSession spark, List<String> nameParts, CatalogPlugin defaultCatalog) {
-        CatalogManager catalogManager = spark.sessionState().catalogManager();
-
         String[] currentNamespace;
-        if (defaultCatalog.equals(catalogManager.currentCatalog())) {
-            currentNamespace = catalogManager.currentNamespace();
+        if (defaultCatalog.equals(SparkShimLoader.shim().currentCatalog(spark))) {
+            currentNamespace = SparkShimLoader.shim().currentNamespace(spark);
         } else {
             currentNamespace = defaultCatalog.defaultNamespace();
         }
@@ -124,13 +122,7 @@ public class SparkUtils {
         Pair<CatalogPlugin, Identifier> catalogIdentifier =
                 SparkUtils.catalogAndIdentifier(
                         nameParts,
-                        catalogName -> {
-                            try {
-                                return catalogManager.catalog(catalogName);
-                            } catch (Exception e) {
-                                return null;
-                            }
-                        },
+                        catalogName -> SparkShimLoader.shim().catalogOrNull(spark, catalogName),
                         Identifier::of,
                         defaultCatalog,
                         currentNamespace);

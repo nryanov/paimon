@@ -29,7 +29,6 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogTablePar
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.datasources.v2.DescribeTableExec
 import org.apache.spark.sql.paimon.shims.SparkShimLoader
 import org.apache.spark.sql.types.StructType
 
@@ -46,8 +45,12 @@ case class PaimonDescribeTableExec(
   extends PaimonLeafV2CommandExec {
 
   override protected def run(): Seq[InternalRow] = {
-    val rows =
-      ArrayBuffer.empty ++= DescribeTableExec(output, table, isExtended).executeCollect()
+    val rows = ArrayBuffer.empty ++= SparkShimLoader.shim.describeTableRows(
+      output,
+      catalog.name(),
+      identifier,
+      table,
+      isExtended)
 
     if (partitionSpec.nonEmpty) {
       describeDetailedPartitionInfo(rows)

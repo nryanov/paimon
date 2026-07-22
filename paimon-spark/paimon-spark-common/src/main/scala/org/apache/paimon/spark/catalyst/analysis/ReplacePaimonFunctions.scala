@@ -32,6 +32,7 @@ import org.apache.spark.sql.catalyst.expressions.objects.Invoke
 import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.PaimonCatalogImplicits._
+import org.apache.spark.sql.paimon.shims.SparkShimLoader
 import org.apache.spark.sql.types.{BinaryType, StringType}
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -48,7 +49,7 @@ object ReplacePaimonFunctions {
       Literal(null, BinaryType)
     } else {
       val catalogAndIdentifier = SparkUtils
-        .catalogAndIdentifier(spark, tableName, spark.sessionState.catalogManager.currentCatalog)
+        .catalogAndIdentifier(spark, tableName, SparkShimLoader.shim.currentCatalog(spark))
       if (!catalogAndIdentifier.catalog().isInstanceOf[SparkBaseCatalog]) {
         throw new UnsupportedOperationException(
           s"${catalogAndIdentifier.catalog()} is not a Paimon catalog")
@@ -93,10 +94,7 @@ case class ReplacePaimonFunctions(spark: SparkSession) extends Rule[LogicalPlan]
       throw new UnsupportedOperationException("Table name cannot be null")
     }
     val catalogAndIdentifier = SparkUtils
-      .catalogAndIdentifier(
-        spark,
-        tableName.toString,
-        spark.sessionState.catalogManager.currentCatalog)
+      .catalogAndIdentifier(spark, tableName.toString, SparkShimLoader.shim.currentCatalog(spark))
     if (!catalogAndIdentifier.catalog().isInstanceOf[SparkBaseCatalog]) {
       throw new UnsupportedOperationException(
         s"${catalogAndIdentifier.catalog()} is not a Paimon catalog")

@@ -29,12 +29,11 @@ import org.apache.spark.sql.catalyst.parser.extensions.UnResolvedPaimonV1Functio
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.UNRESOLVED_FUNCTION
+import org.apache.spark.sql.paimon.shims.SparkShimLoader
 import org.apache.spark.sql.types.{LongType, StringType}
 import org.apache.spark.unsafe.types.UTF8String
 
 case class PaimonFunctionResolver(spark: SparkSession) extends Rule[LogicalPlan] {
-
-  protected lazy val catalogManager = spark.sessionState.catalogManager
 
   override def apply(plan: LogicalPlan): LogicalPlan =
     plan.resolveOperatorsUpWithPruning(_.containsAnyPattern(UNRESOLVED_FUNCTION)) {
@@ -46,7 +45,7 @@ case class PaimonFunctionResolver(spark: SparkSession) extends Rule[LogicalPlan]
           case u: UnResolvedPaimonV1Function if u.arguments.forall(_.resolved) =>
             u.funcIdent.catalog match {
               case Some(catalog) =>
-                catalogManager.catalog(catalog) match {
+                SparkShimLoader.shim.catalog(spark, catalog) match {
                   case v1FunctionCatalog: SupportV1Function =>
                     v1FunctionCatalog.registerAndResolveV1Function(u)
                   case _ =>

@@ -174,11 +174,11 @@ case class RewritePaimonFunctionCommands(spark: SparkSession)
   }
 
   private def isSparkBuiltInFunction(funcIdent: FunctionIdentifier): Boolean = {
-    catalogManager.v1SessionCatalog.isBuiltinFunction(funcIdent)
+    SparkShimLoader.shim.isBuiltinFunction(spark, funcIdent.funcName)
   }
 
   private def isSparkTmpFunc(funcIdent: FunctionIdentifier): Boolean = {
-    catalogManager.v1SessionCatalog.isTemporaryFunction(funcIdent)
+    SparkShimLoader.shim.isTemporaryFunction(spark, funcIdent)
   }
 
   private def isPaimonV1Function(fun: PaimonFunction): Boolean = {

@@ -1182,13 +1182,12 @@ under the License.
         </extensions>
     </build>
 
-    <!--
-    Uncomment the following "repositories" tag if your maven fails to download paimon-shade snapshot files.
-    We comment these tags by default because downloading from apache repositories is very slow for both github and developers.
-    -->
-
-    <!--
     <repositories>
+        <!--
+            Uncomment the following "repositories" tag if your maven fails to download paimon-shade snapshot files.
+            We comment these tags by default because downloading from apache repositories is very slow for both github and developers.
+        -->
+        <!--
         <repository>
             <id>central</id>
             <url>https://repo.maven.apache.org/maven2</url>
@@ -1212,6 +1211,18 @@ under the License.
                 <enabled>false</enabled>
             </releases>
         </repository>
+        -->
+        <repository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+        <repository>
+            <id>arenadata</id>
+            <name>arenadata</name>
+            <url>https://maven.pkg.github.com/arenadata/*</url>
+        </repository>
     </repositories>
-    -->
 </project>

@@ -46,13 +46,13 @@ import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, Assignment, CTERe
 // compile time but must also run on 3.2 / 3.3).
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.{ArrayData, GeneratedColumn, ResolveDefaultColumns}
-import org.apache.spark.sql.connector.catalog.{Column, Identifier, StagingTableCatalog, Table, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Column, Identifier, StagingTableCatalog, Table, TableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogV2Util.structTypeToV2Columns
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.connector.write.BatchWrite
 import org.apache.spark.sql.execution.{SparkFormatTable, SparkPlan}
 import org.apache.spark.sql.execution.datasources.{PartitioningAwareFileIndex, PartitionSpec}
-import org.apache.spark.sql.execution.datasources.v2.{AtomicReplaceTableAsSelectExec, AtomicReplaceTableExec, ReplaceTableAsSelectExec, ReplaceTableExec}
+import org.apache.spark.sql.execution.datasources.v2.{AtomicReplaceTableAsSelectExec, AtomicReplaceTableExec, CreateTableAsSelectExec, DescribeTableExec, ReplaceTableAsSelectExec, ReplaceTableExec}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
 import org.apache.spark.sql.internal.SQLConf
@@ -95,6 +95,24 @@ class Spark3Shim extends SparkShim {
       partitions: Array[Transform],
       properties: JMap[String, String]): Table = {
     tableCatalog.createTable(ident, schema, partitions, properties)
+  }
+
+  override def createCreateTableAsSelectExec(
+      catalog: TableCatalog,
+      ident: Identifier,
+      partitioning: Seq[Transform],
+      query: LogicalPlan,
+      tableSpec: TableSpec,
+      writeOptions: Map[String, String],
+      ifNotExists: Boolean): SparkPlan = {
+    CreateTableAsSelectExec(
+      catalog,
+      ident,
+      partitioning,
+      query,
+      tableSpec,
+      writeOptions,
+      ifNotExists)
   }
 
   override def createReplaceTableAsSelectExec(
@@ -269,6 +287,40 @@ class Spark3Shim extends SparkShim {
       withSchemaEvolution: Boolean): LogicalPlan = {
     OverwritePartitionsDynamic.byName(table, query, writeOptions)
   }
+
+  override def currentCatalog(spark: SparkSession): CatalogPlugin =
+    spark.sessionState.catalogManager.currentCatalog
+
+  override def currentNamespace(spark: SparkSession): Array[String] =
+    spark.sessionState.catalogManager.currentNamespace
+
+  override def catalog(spark: SparkSession, name: String): CatalogPlugin =
+    spark.sessionState.catalogManager.catalog(name)
+
+  override def catalogOrNull(spark: SparkSession, name: String): CatalogPlugin = {
+    try {
+      catalog(spark, name)
+    } catch {
+      case _: Exception => null
+    }
+  }
+
+  override def isBuiltinFunction(spark: SparkSession, name: String): Boolean =
+    spark.sessionState.catalogManager.v1SessionCatalog.isBuiltinFunction(FunctionIdentifier(name))
+
+  override def isTemporaryFunction(spark: SparkSession, ident: FunctionIdentifier): Boolean =
+    spark.sessionState.catalogManager.v1SessionCatalog.isTemporaryFunction(ident)
+
+  override def isTempView(spark: SparkSession, nameParts: Seq[String]): Boolean =
+    spark.sessionState.catalogManager.v1SessionCatalog.isTempView(nameParts)
+
+  override def describeTableRows(
+      output: Seq[Attribute],
+      catalogName: String,
+      identifier: Identifier,
+      table: Table,
+      isExtended: Boolean): Array[InternalRow] =
+    DescribeTableExec(output, table, isExtended).executeCollect()
 
   override def describeRelationPartitionSpec(describe: DescribeRelation): Map[String, String] =
     describe.partitionSpec

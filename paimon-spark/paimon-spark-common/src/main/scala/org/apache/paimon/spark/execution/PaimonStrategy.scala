@@ -205,7 +205,10 @@ case class PaimonStrategy(spark: SparkSession)
   private object PaimonCatalogAndIdentifier {
     def unapply(identifier: Seq[String]): Option[(TableCatalog, Identifier)] = {
       val catalogAndIdentifier =
-        SparkUtils.catalogAndIdentifier(spark, identifier.asJava, catalogManager.currentCatalog)
+        SparkUtils.catalogAndIdentifier(
+          spark,
+          identifier.asJava,
+          SparkShimLoader.shim.currentCatalog(spark))
       catalogAndIdentifier.catalog match {
         case paimonCatalog: SparkCatalogBase =>
           Some((paimonCatalog, catalogAndIdentifier.identifier()))
