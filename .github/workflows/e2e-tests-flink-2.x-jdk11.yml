@@ -45,7 +45,7 @@ jobs:
       fail-fast: true
       matrix:
         # Only Test Latest Version
-        flink_version: [ '2.2' ]
+        flink_version: [ '2.1', '2.2' ]
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

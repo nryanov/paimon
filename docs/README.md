@@ -88,7 +88,7 @@ Spark content here.
 
 ## Version Variables
 
-Use `@@VERSION@@` in markdown and it will be replaced with the current version (`1.5-SNAPSHOT`) at build time. Other available tokens:
+Use `@@VERSION@@` in markdown and it will be replaced with the current version (`4.4.0_2.0.0_1`) at build time. Other available tokens:
 
 - `@@VERSION@@` — Paimon version
 - `@@FLINK_VERSION@@` — Flink version
